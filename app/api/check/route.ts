@@ -75,7 +75,7 @@ export async function POST(req: NextRequest) {
   const encoder = new TextEncoder();
   const stream = new ReadableStream({
 async start(controller) {
-  const CONCURRENCY = 2;
+  const CONCURRENCY = 5;
   const queue = urls.filter((u: string) => u.trim());
   let index = 0;
   let active = 0;
