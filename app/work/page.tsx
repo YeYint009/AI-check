@@ -354,7 +354,7 @@ async function handleSaveProject() {
             onClick={() => setShowSaveDialog(true)}
             className="text-sm px-4 py-2 bg-yellow-400 text-purple-900 font-bold rounded-lg hover:bg-yellow-300"
           >
-            💾 案件として保存
+            💾 案件保存
           </button>
           <button
             onClick={() => router.push("/")}
