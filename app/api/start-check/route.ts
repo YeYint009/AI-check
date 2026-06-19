@@ -3,7 +3,7 @@ import { after } from 'next/server';
 import { createJob, setTotalBatches, incrementCompletedBatch, completeJob } from '../../lib/job';
 import { runCheckJob } from '../../lib/checkRunner';
 
-const BATCH_SIZE = 4; // 1リクエストあたりの処理件数（60秒以内に収まる目安）
+const BATCH_SIZE = 3; // 1リクエストあたりの処理件数（60秒以内に収まる目安）
 
 export async function POST(req: NextRequest) {
   const { urls, sheetUrl, context } = await req.json();
