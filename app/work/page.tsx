@@ -29,6 +29,7 @@ function WorkPageContent() {
   const [history, setHistory] = useState<ProjectHistory[]>([]);
   const [openRows, setOpenRows] = useState<Set<number>>(new Set());
   const [currentProjectId, setCurrentProjectId] = useState<string | null>(null);
+  const [recheckingUrls, setRecheckingUrls] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     const interval = setInterval(() => forceUpdate((n) => n + 1), 1000);
@@ -44,93 +45,93 @@ function WorkPageContent() {
   );
   const [jobTotal, setJobTotal] = useState(0);
 
-useEffect(() => {
-  const sUrl = sessionStorage.getItem("check_sheet_url");
-  setSheetUrl(sUrl || "");
-  setCheckers(getCheckers());
-  setHistory(getHistory());
+  useEffect(() => {
+    const sUrl = sessionStorage.getItem("check_sheet_url");
+    setSheetUrl(sUrl || "");
+    setCheckers(getCheckers());
+    setHistory(getHistory());
 
-  if (loadProjectId) {
-    // 保存済み案件を開く場合
-    const raw = sessionStorage.getItem("loaded_project");
-    if (raw) {
-      const project = JSON.parse(raw);
-      setItems(project.items);
-      setSheetUrl(project.sheetUrl);
-       setCurrentProjectId(project.id); // ← 追加
-    setProjectName(project.projectName); // ← 追加（保存時に名前を再利用）
-    }
-  } else if (!jobId) {
-    const raw = sessionStorage.getItem("check_results");
-    if (raw) {
-      const results: CheckResult[] = JSON.parse(raw);
-      setItems(
-        results.map((r) => ({
-          ...r,
-          checker: "",
-          note: "",
-          estimatedMinutes: "",
-          actualSeconds: 0,
-          isTracking: false,
-          trackingStartedAt: null,
-        })),
-      );
-    } else {
-      router.push("/");
-    }
-  }
-}, [router, jobId, loadProjectId]);
-
-// ジョブのポーリング
-useEffect(() => {
-  if (!jobId) return;
-
-  let cancelled = false;
-
-  async function poll() {
-    try {
-      const res = await fetch(`/api/job-status?jobId=${jobId}`);
-      if (!res.ok) return;
-      const job = await res.json();
-      if (cancelled) return;
-
-      setJobStatus(job.status);
-      setJobTotal(job.totalUrls);
-      setSheetUrl(job.sheetUrl);
-
-      setItems((prev) => {
-        const existingUrls = new Set(prev.map((p) => p.url));
-        const newOnes = job.results.filter(
-          (r: CheckResult) => !existingUrls.has(r.url),
-        );
-        if (newOnes.length === 0) return prev;
-        const converted: WorkItem[] = newOnes.map((r: CheckResult) => ({
-          ...r,
-          checker: "",
-          note: "",
-          estimatedMinutes: "",
-          actualSeconds: 0,
-          isTracking: false,
-          trackingStartedAt: null,
-        }));
-        return [...prev, ...converted];
-      });
-
-      if (job.status !== "completed" && !cancelled) {
-        setTimeout(poll, 3000);
+    if (loadProjectId) {
+      // 保存済み案件を開く場合
+      const raw = sessionStorage.getItem("loaded_project");
+      if (raw) {
+        const project = JSON.parse(raw);
+        setItems(project.items);
+        setSheetUrl(project.sheetUrl);
+        setCurrentProjectId(project.id); // ← 追加
+        setProjectName(project.projectName); // ← 追加（保存時に名前を再利用）
       }
-    } catch (e) {
-      console.error("polling error:", e);
-      if (!cancelled) setTimeout(poll, 5000);
+    } else if (!jobId) {
+      const raw = sessionStorage.getItem("check_results");
+      if (raw) {
+        const results: CheckResult[] = JSON.parse(raw);
+        setItems(
+          results.map((r) => ({
+            ...r,
+            checker: "",
+            note: "",
+            estimatedMinutes: "",
+            actualSeconds: 0,
+            isTracking: false,
+            trackingStartedAt: null,
+          })),
+        );
+      } else {
+        router.push("/");
+      }
     }
-  }
+  }, [router, jobId, loadProjectId]);
 
-  poll();
+  // ジョブのポーリング
+  useEffect(() => {
+    if (!jobId) return;
 
-  return () => {
-    cancelled = true;
-  };
-}, [jobId]);
+    let cancelled = false;
+
+    async function poll() {
+      try {
+        const res = await fetch(`/api/job-status?jobId=${jobId}`);
+        if (!res.ok) return;
+        const job = await res.json();
+        if (cancelled) return;
+
+        setJobStatus(job.status);
+        setJobTotal(job.totalUrls);
+        setSheetUrl(job.sheetUrl);
+
+        setItems((prev) => {
+          const existingUrls = new Set(prev.map((p) => p.url));
+          const newOnes = job.results.filter(
+            (r: CheckResult) => !existingUrls.has(r.url),
+          );
+          if (newOnes.length === 0) return prev;
+          const converted: WorkItem[] = newOnes.map((r: CheckResult) => ({
+            ...r,
+            checker: "",
+            note: "",
+            estimatedMinutes: "",
+            actualSeconds: 0,
+            isTracking: false,
+            trackingStartedAt: null,
+          }));
+          return [...prev, ...converted];
+        });
+
+        if (job.status !== "completed" && !cancelled) {
+          setTimeout(poll, 3000);
+        }
+      } catch (e) {
+        console.error("polling error:", e);
+        if (!cancelled) setTimeout(poll, 5000);
+      }
+    }
+
+    poll();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [jobId]);
 
   function updateItem(index: number, patch: Partial<WorkItem>) {
     setItems((prev) =>
@@ -160,20 +161,93 @@ useEffect(() => {
   }
 
   async function handleCancelJob() {
-  if (!jobId) return;
-  if (!confirm("チェックを停止しますか？現在処理中のページが終わったら止まります。")) return;
+    if (!jobId) return;
+    if (
+      !confirm(
+        "チェックを停止しますか？現在処理中のページが終わったら止まります。",
+      )
+    )
+      return;
 
-  try {
-    await fetch("/api/cancel-job", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ jobId }),
-    });
-    setJobStatus("completed"); // UI上は完了扱いにする
-  } catch (e) {
-    console.error("cancel error:", e);
+    try {
+      await fetch("/api/cancel-job", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ jobId }),
+      });
+      setJobStatus("completed"); // UI上は完了扱いにする
+    } catch (e) {
+      console.error("cancel error:", e);
+    }
   }
-}
+
+  async function recheckSingleItem(index: number) {
+    const item = items[index];
+    setRecheckingUrls((prev) => new Set(prev).add(item.url));
+
+    try {
+      const res = await fetch("/api/start-check", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ urls: [item.url], sheetUrl, context: "" }),
+      });
+
+      const data = await res.json();
+      if (!res.ok || !data.jobId) {
+        throw new Error(data.error || "再チェックに失敗しました");
+      }
+
+      // 単発ジョブの結果をポーリングして取得
+      await pollSingleResult(data.jobId, index);
+    } catch (e: any) {
+      console.error("recheck error:", e);
+      alert("再チェックに失敗しました: " + e.message);
+    } finally {
+      setRecheckingUrls((prev) => {
+        const next = new Set(prev);
+        next.delete(item.url);
+        return next;
+      });
+    }
+  }
+
+  async function pollSingleResult(
+    recheckJobId: string,
+    index: number,
+  ): Promise<void> {
+    return new Promise((resolve) => {
+      async function poll() {
+        try {
+          const res = await fetch(`/api/job-status?jobId=${recheckJobId}`);
+          if (!res.ok) {
+            resolve();
+            return;
+          }
+          const job = await res.json();
+
+          if (job.results && job.results.length > 0) {
+            const newResult = job.results[0];
+            updateItem(index, {
+              h1: newResult.h1,
+              status: newResult.status,
+              result: newResult.result,
+              elapsed: newResult.elapsed,
+              fixItems: undefined, // 再パースさせるためリセット
+            });
+          }
+
+          if (job.status === "completed") {
+            resolve();
+          } else {
+            setTimeout(poll, 2000);
+          }
+        } catch (e) {
+          resolve();
+        }
+      }
+      poll();
+    });
+  }
 
   function toggleFixItemCompleted(itemIndex: number, fixId: string) {
     const item = items[itemIndex];
@@ -208,44 +282,44 @@ useEffect(() => {
     });
   }
 
-// 変更後
-async function handleSaveProject() {
-  const name = projectName.trim();
-  if (!name) {
-    alert("案件名を入力してください");
-    return;
-  }
-
-  // 既存案件を編集中なら同じIDを使う、新規ならタイムスタンプで新規発行
-  const project = {
-    id: currentProjectId || Date.now().toString(),
-    projectName: name,
-    sheetUrl,
-    items,
-    savedAt: new Date().toLocaleString("ja-JP"),
-  };
-
-  try {
-    const res = await fetch("/api/projects", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(project),
-    });
-
-    if (!res.ok) throw new Error("保存に失敗しました");
-
-    setCurrentProjectId(project.id); // 以後はこの案件として更新され続ける
-    setShowSaveDialog(false);
-
-    if (currentProjectId) {
-      alert("✅ 更新しました");
-    } else {
-      alert("✅ 新規保存しました（全員が閲覧できます）");
+  // 変更後
+  async function handleSaveProject() {
+    const name = projectName.trim();
+    if (!name) {
+      alert("案件名を入力してください");
+      return;
     }
-  } catch (e: any) {
-    alert("エラー: " + e.message);
+
+    // 既存案件を編集中なら同じIDを使う、新規ならタイムスタンプで新規発行
+    const project = {
+      id: currentProjectId || Date.now().toString(),
+      projectName: name,
+      sheetUrl,
+      items,
+      savedAt: new Date().toLocaleString("ja-JP"),
+    };
+
+    try {
+      const res = await fetch("/api/projects", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(project),
+      });
+
+      if (!res.ok) throw new Error("保存に失敗しました");
+
+      setCurrentProjectId(project.id); // 以後はこの案件として更新され続ける
+      setShowSaveDialog(false);
+
+      if (currentProjectId) {
+        alert("✅ 更新しました");
+      } else {
+        alert("✅ 新規保存しました（全員が閲覧できます）");
+      }
+    } catch (e: any) {
+      alert("エラー: " + e.message);
+    }
   }
-}
 
   function handleDeleteHistory(id: string, name: string) {
     if (!confirm(`「${name}」を削除しますか？この操作は取り消せません。`))
@@ -489,31 +563,55 @@ async function handleSaveProject() {
       )}
 
       <div className="max-w-6xl mx-auto p-6">
-{jobId && jobStatus === "running" && (
-  <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 mb-4">
-    <div className="flex items-center gap-3 mb-2">
-      <svg className="animate-spin h-5 w-5 text-blue-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
-      </svg>
-      <span className="text-blue-700 font-bold text-sm">チェック実行中...</span>
-      <span className="text-blue-600 text-sm ml-auto">{items.length} / {jobTotal} 件完了</span>
-      <button
-        onClick={handleCancelJob}
-        className="text-xs px-3 py-1 bg-red-100 text-red-700 border border-red-300 rounded-lg hover:bg-red-200"
-      >
-        ⏹ 停止
-      </button>
-    </div>
-    <div className="w-full bg-blue-100 rounded-full h-2 overflow-hidden">
-      <div
-        className="bg-blue-500 h-2 rounded-full transition-all duration-500"
-        style={{ width: `${jobTotal > 0 ? (items.length / jobTotal) * 100 : 0}%` }}
-      />
-    </div>
-    <p className="text-xs text-blue-500 mt-2">このページを閉じても、同じURLを開けば続きから確認できます</p>
-  </div>
-)}
+        {jobId && jobStatus === "running" && (
+          <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 mb-4">
+            <div className="flex items-center gap-3 mb-2">
+              <svg
+                className="animate-spin h-5 w-5 text-blue-500"
+                xmlns="http://www.w3.org/2000/svg"
+                fill="none"
+                viewBox="0 0 24 24"
+              >
+                <circle
+                  className="opacity-25"
+                  cx="12"
+                  cy="12"
+                  r="10"
+                  stroke="currentColor"
+                  strokeWidth="4"
+                />
+                <path
+                  className="opacity-75"
+                  fill="currentColor"
+                  d="M4 12a8 8 0 018-8v8H4z"
+                />
+              </svg>
+              <span className="text-blue-700 font-bold text-sm">
+                チェック実行中...
+              </span>
+              <span className="text-blue-600 text-sm ml-auto">
+                {items.length} / {jobTotal} 件完了
+              </span>
+              <button
+                onClick={handleCancelJob}
+                className="text-xs px-3 py-1 bg-red-100 text-red-700 border border-red-300 rounded-lg hover:bg-red-200"
+              >
+                ⏹ 停止
+              </button>
+            </div>
+            <div className="w-full bg-blue-100 rounded-full h-2 overflow-hidden">
+              <div
+                className="bg-blue-500 h-2 rounded-full transition-all duration-500"
+                style={{
+                  width: `${jobTotal > 0 ? (items.length / jobTotal) * 100 : 0}%`,
+                }}
+              />
+            </div>
+            <p className="text-xs text-blue-500 mt-2">
+              このページを閉じても、同じURLを開けば続きから確認できます
+            </p>
+          </div>
+        )}
         <div className="bg-white rounded-xl shadow p-4 mb-4 flex flex-wrap gap-6 items-center">
           <div className="text-sm text-gray-600">
             合計目安工数: <span className="font-bold">{totalEstimated}分</span>
@@ -687,6 +785,13 @@ async function handleSaveProject() {
                               ▶ 開始
                             </button>
                           )}
+                          <button
+                            onClick={() => recheckSingleItem(i)}
+                            disabled={recheckingUrls.has(item.url)}
+                            className="text-xs px-2 py-1 bg-blue-100 text-blue-700 border border-blue-300 rounded disabled:opacity-50"
+                          >
+                            {recheckingUrls.has(item.url) ? "..." : "🔄"}
+                          </button>
                         </div>
                       </td>
                     </tr>
