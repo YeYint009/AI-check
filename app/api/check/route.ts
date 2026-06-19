@@ -1,6 +1,6 @@
 import { NextRequest } from 'next/server';
 
-const GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent';
+const GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent';
 
 async function fetchHtml(url: string): Promise<string> {
   const res = await fetch(url, {
@@ -71,59 +71,92 @@ export async function POST(req: NextRequest) {
     return new Response(JSON.stringify({ error: 'APIキーが設定されていません' }), { status: 500 });
   }
 
-  // ストリーミングレスポンス：1件完了するたびに送信
   const encoder = new TextEncoder();
+  let closed = false; // ← controllerが閉じられたかを追跡するフラグ
+
   const stream = new ReadableStream({
-async start(controller) {
-  const CONCURRENCY = 5;
-  const queue = urls.filter((u: string) => u.trim());
-  let index = 0;
-  let active = 0;
+    async start(controller) {
+      const CONCURRENCY = 3;
+      const queue = urls.filter((u: string) => u.trim());
+      let index = 0;
+      let active = 0;
 
-  await new Promise<void>((resolve) => {
-    function next() {
-      while (active < CONCURRENCY && index < queue.length) {
-        const url = queue[index++].trim();
-        active++;
-
-        const startTime = Date.now();
-        console.log(`[CHECK START] ${url}`);
-
-        fetchHtml(url)
-          .then(html => {
-            console.log(`[HTML OK] ${url} - ${html.length}文字`);
-            const h1 = extractH1(html);
-            return checkWithGemini(html, sheetUrl, url, context, apiKey)
-              .then(result => {
-                console.log(`[GEMINI OK] ${url}`);
-                const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
-                const data = JSON.stringify({ url, h1, status: 'success', result, elapsed });
-                controller.enqueue(encoder.encode(data + '\n'));
-              });
-          })
-          .catch((e: any) => {
-            console.error(`[ERROR] ${url}:`, e.message);
-            const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
-            const data = JSON.stringify({ url, h1: 'エラー', status: 'error', result: e.message, elapsed });
-            controller.enqueue(encoder.encode(data + '\n'));
-          })
-          .finally(() => {
-            active--;
-            if (index < queue.length) {
-              next();
-            } else if (active === 0) {
-              console.log(`[ALL DONE]`);
-              resolve();
-            }
-          });
+      // 安全にenqueueするヘルパー関数
+      function safeEnqueue(data: string) {
+        if (closed) return;
+        try {
+          controller.enqueue(encoder.encode(data));
+        } catch (e) {
+          closed = true;
+        }
       }
+
+      function safeClose() {
+        if (closed) return;
+        closed = true;
+        try {
+          controller.close();
+        } catch (e) {
+          // 既に閉じられている場合は無視
+        }
+      }
+
+      // ハートビート：15秒ごとに空行を送って接続を維持
+      const heartbeat = setInterval(() => {
+        safeEnqueue('\n');
+      }, 15000);
+
+      await new Promise<void>((resolve) => {
+        function next() {
+          while (active < CONCURRENCY && index < queue.length) {
+            const url = queue[index++].trim();
+            active++;
+
+            const startTime = Date.now();
+            console.log(`[CHECK START] ${url}`);
+
+            fetchHtml(url)
+              .then(html => {
+                console.log(`[HTML OK] ${url} - ${html.length}文字`);
+                const h1 = extractH1(html);
+                return checkWithGemini(html, sheetUrl, url, context, apiKey)
+                  .then(result => {
+                    console.log(`[GEMINI OK] ${url}`);
+                    const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+                    const data = JSON.stringify({ url, h1, status: 'success', result, elapsed });
+                    safeEnqueue(data + '\n');
+                  });
+              })
+              .catch((e: any) => {
+                console.error(`[ERROR] ${url}:`, e.message);
+                const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+                const data = JSON.stringify({ url, h1: 'エラー', status: 'error', result: e.message, elapsed });
+                safeEnqueue(data + '\n');
+              })
+              .finally(() => {
+                active--;
+                if (index < queue.length) {
+                  next();
+                } else if (active === 0) {
+                  console.log(`[ALL DONE]`);
+                  resolve();
+                }
+              });
+          }
+        }
+
+        next();
+      });
+
+      clearInterval(heartbeat);
+      safeClose();
+    },
+
+    cancel() {
+      // クライアントが接続を切断した場合（タブを閉じた、リロードしたなど）
+      closed = true;
+      console.log('[STREAM CANCELLED] クライアントが切断しました');
     }
-
-    next();
-  });
-
-  controller.close();
-}
   });
 
   return new Response(stream, {

@@ -1,11 +1,12 @@
 "use client";
 
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import * as XLSX from "xlsx";
 import Header from "./components/Header";
 import InputForm from "./components/InputForm";
 import ResultSummary from "./components/ResultSummary";
 import ResultItem from "./components/ResultItem";
+import { useRouter } from "next/navigation";
 
 const DEFAULT_CONTEXT = `顧客のサイト作成を行っています。
 サイトに不備がないようにしたいです。
@@ -51,94 +52,61 @@ export default function Home() {
   const [openIndexes, setOpenIndexes] = useState<Set<number>>(new Set());
   const startTimeRef = useRef<number>(0);
   const [recheckingUrls, setRecheckingUrls] = useState<Set<string>>(new Set());
+  const [activeJobId, setActiveJobId] = useState<string | null>(null);
 
+useEffect(() => {
+  const raw = sessionStorage.getItem("check_results");
+  const sUrl = sessionStorage.getItem("check_sheet_url");
+  if (raw) {
+    try {
+      setResults(JSON.parse(raw));
+      if (sUrl) setSheetUrl(sUrl);
+    } catch (e) {}
+  }
 
-const urls = urlInput
-  .split(/[\n,\s]+/)
-  .map(u => u.trim())
-  .filter(u => u.startsWith('http'));
+  const jobId = sessionStorage.getItem("active_job_id");
+  if (jobId) setActiveJobId(jobId);
+}, []);
 
-async function startCheck() {
-  if (!sheetUrl) return alert('コンセプトシートURLを入力してください');
-  if (!urls.length) return alert('チェックするURLを入力してください');
+  const router = useRouter();
 
-  setLoading(true);
-  setResults([]);
-  setProgress({ current: 0, total: urls.length });
-  setTotalElapsed('');
-  setOpenIndexes(new Set());
-  startTimeRef.current = Date.now();
+  function goToWorkPage() {
+    sessionStorage.setItem("check_results", JSON.stringify(results));
+    sessionStorage.setItem("check_sheet_url", sheetUrl);
+    router.push("/work");
+  }
 
-  try {
-    const res = await fetch('/api/check', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ urls, sheetUrl, context }),
-    });
+  const urls = urlInput
+    .split(/[\n,\s]+/)
+    .map((u) => u.trim())
+    .filter((u) => u.startsWith("http"));
 
-    if (!res.ok) throw new Error(`HTTPエラー: ${res.status}`);
-    if (!res.body) throw new Error('ストリームが取得できません');
-
-    const reader = res.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = '';
+  async function startCheck() {
+    if (!sheetUrl) return alert("コンセプトシートURLを入力してください");
+    if (!urls.length) return alert("チェックするURLを入力してください");
 
     try {
-      while (true) {
-        const { done, value } = await reader.read();
+      const res = await fetch("/api/start-check", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ urls, sheetUrl, context }),
+      });
 
-        if (value) {
-          buffer += decoder.decode(value, { stream: true });
+      const data = await res.json();
 
-          // 改行で分割して1行ずつ処理
-          let newlineIndex;
-          while ((newlineIndex = buffer.indexOf('\n')) !== -1) {
-            const line = buffer.slice(0, newlineIndex).trim();
-            buffer = buffer.slice(newlineIndex + 1);
-
-            if (!line) continue;
-            try {
-              const item = JSON.parse(line);
-              console.log('受信:', item.url, item.status);
-              setResults(prev => [...prev, item]);
-              setProgress(prev => ({ ...prev, current: prev.current + 1 }));
-            } catch (e) {
-              console.warn('JSONパース失敗:', line);
-            }
-          }
-        }
-
-        if (done) {
-          // 残りバッファ処理
-          const remaining = buffer.trim();
-          if (remaining) {
-            try {
-              const item = JSON.parse(remaining);
-              setResults(prev => [...prev, item]);
-              setProgress(prev => ({ ...prev, current: prev.current + 1 }));
-            } catch (e) {
-              console.warn('残りバッファパース失敗:', remaining);
-            }
-          }
-          break;
-        }
+      if (!res.ok || !data.jobId) {
+        alert("エラー: " + (data.error || "ジョブを開始できませんでした"));
+        return;
       }
-    } finally {
-      reader.releaseLock();
+
+      // sheetUrlも保存しておく（作業ページで使う）
+sessionStorage.setItem("check_sheet_url", sheetUrl);
+sessionStorage.setItem("active_job_id", data.jobId);
+router.push(`/work?jobId=${data.jobId}`);
+    } catch (e: any) {
+      alert("エラーが発生しました: " + e.message);
     }
-
-    const elapsed = Date.now() - startTimeRef.current;
-    const min = Math.floor(elapsed / 60000);
-    const sec = Math.floor((elapsed % 60000) / 1000);
-    setTotalElapsed(`${min}分${sec}秒`);
-
-  } catch (e: any) {
-    console.error('startCheck error:', e);
-    alert('エラーが発生しました: ' + e.message);
-  } finally {
-    setLoading(false);
   }
-}
   function toggleOpen(i: number) {
     setOpenIndexes((prev) => {
       const next = new Set(prev);
@@ -229,6 +197,16 @@ async function startCheck() {
         setContext={setContext}
         defaultContext={DEFAULT_CONTEXT}
       />
+        {activeJobId && (
+      <div className="max-w-4xl mx-auto px-6 pt-4">
+        <button
+          onClick={() => router.push(`/work?jobId=${activeJobId}`)}
+          className="w-full bg-blue-50 border border-blue-300 text-blue-700 font-bold py-3 rounded-lg hover:bg-blue-100 transition flex items-center justify-center gap-2"
+        >
+          🔄 進行中のチェックに戻る（Job: {activeJobId.slice(-6)}）
+        </button>
+      </div>
+    )}
       <div className="max-w-4xl mx-auto p-6 space-y-6">
         <InputForm
           sheetUrl={sheetUrl}
@@ -248,6 +226,7 @@ async function startCheck() {
               errCount={errCount}
               totalElapsed={totalElapsed}
               onExport={exportToXlsx}
+              onGoToWork={goToWorkPage}
             />
             {/* スクロールエリア */}
             <div className="space-y-4 max-h-[70vh] overflow-y-auto pr-1">
