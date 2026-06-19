@@ -80,7 +80,7 @@ export async function runCheckJob(
   context: string,
   apiKey: string,
 ): Promise<void> {
-  const CONCURRENCY = 2;
+  const CONCURRENCY = 4;
   const queue = [...urls];
   let index = 0;
   let active = 0;
