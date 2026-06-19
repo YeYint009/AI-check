@@ -4,10 +4,15 @@ import { SavedProject } from '../types';
 const PROJECT_PREFIX = 'project:';
 const PROJECT_LIST_KEY = 'project_list';
 
+
 export async function saveProject(project: SavedProject): Promise<void> {
+  const exists = await redis.get(`${PROJECT_PREFIX}${project.id}`);
   await redis.set(`${PROJECT_PREFIX}${project.id}`, JSON.stringify(project));
-  // 案件一覧（IDのリスト）に追加
-  await redis.lpush(PROJECT_LIST_KEY, project.id);
+
+  // 既に存在する場合はリストに追加しない（重複防止）
+  if (!exists) {
+    await redis.lpush(PROJECT_LIST_KEY, project.id);
+  }
 }
 
 export async function getAllProjects(): Promise<SavedProject[]> {
@@ -35,3 +40,4 @@ export async function deleteProject(id: string): Promise<void> {
   await redis.del(`${PROJECT_PREFIX}${id}`);
   await redis.lrem(PROJECT_LIST_KEY, 0, id);
 }
+

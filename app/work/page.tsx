@@ -28,6 +28,7 @@ function WorkPageContent() {
   const [showHistoryPanel, setShowHistoryPanel] = useState(false);
   const [history, setHistory] = useState<ProjectHistory[]>([]);
   const [openRows, setOpenRows] = useState<Set<number>>(new Set());
+  const [currentProjectId, setCurrentProjectId] = useState<string | null>(null);
 
   useEffect(() => {
     const interval = setInterval(() => forceUpdate((n) => n + 1), 1000);
@@ -56,6 +57,8 @@ useEffect(() => {
       const project = JSON.parse(raw);
       setItems(project.items);
       setSheetUrl(project.sheetUrl);
+       setCurrentProjectId(project.id); // ← 追加
+    setProjectName(project.projectName); // ← 追加（保存時に名前を再利用）
     }
   } else if (!jobId) {
     const raw = sessionStorage.getItem("check_results");
@@ -213,8 +216,9 @@ async function handleSaveProject() {
     return;
   }
 
+  // 既存案件を編集中なら同じIDを使う、新規ならタイムスタンプで新規発行
   const project = {
-    id: Date.now().toString(),
+    id: currentProjectId || Date.now().toString(),
     projectName: name,
     sheetUrl,
     items,
@@ -230,9 +234,14 @@ async function handleSaveProject() {
 
     if (!res.ok) throw new Error("保存に失敗しました");
 
+    setCurrentProjectId(project.id); // 以後はこの案件として更新され続ける
     setShowSaveDialog(false);
-    setProjectName("");
-    alert("✅ サーバーに保存しました（全員が閲覧できます）");
+
+    if (currentProjectId) {
+      alert("✅ 更新しました");
+    } else {
+      alert("✅ 新規保存しました（全員が閲覧できます）");
+    }
   } catch (e: any) {
     alert("エラー: " + e.message);
   }
