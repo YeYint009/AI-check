@@ -42,3 +42,12 @@ export type Job = {
   results: CheckResult[];
   createdAt: number;
 };
+
+export type SavedProject = {
+  id: string;
+  projectName: string;
+  sheetUrl: string;
+  items: WorkItem[];
+  savedAt: string;
+  savedBy?: string;
+};

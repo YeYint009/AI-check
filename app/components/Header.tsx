@@ -1,6 +1,6 @@
-'use client';
+"use client";
 
-import { useState } from 'react';
+import { useState } from "react";
 
 type Props = {
   context: string;
@@ -12,10 +12,10 @@ export default function Header({ context, setContext, defaultContext }: Props) {
   const [open, setOpen] = useState(false);
 
   function saveAsTxt() {
-    const blob = new Blob([context], { type: 'text/plain;charset=utf-8' });
-    const a = document.createElement('a');
+    const blob = new Blob([context], { type: "text/plain;charset=utf-8" });
+    const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
-    a.download = 'html_check_context.txt';
+    a.download = "html_check_context.txt";
     a.click();
   }
 
@@ -23,12 +23,20 @@ export default function Header({ context, setContext, defaultContext }: Props) {
     <>
       <header className="bg-blue-600 text-white px-6 py-4 shadow flex items-center justify-between">
         <h1 className="text-xl font-bold">🔍 サイトHTMLチェックツール</h1>
-        <button
-          onClick={() => setOpen(true)}
-          className="text-sm px-4 py-2 bg-white text-blue-700 font-bold rounded-lg hover:bg-blue-50 transition"
-        >
-          📝 チェックコンテキスト
-        </button>
+        <div className="flex gap-2">
+          <button
+            onClick={() => (window.location.href = "/projects")}
+            className="text-sm px-4 py-2 bg-white text-blue-700 font-bold rounded-lg hover:bg-blue-50 transition"
+          >
+            📂 案件一覧
+          </button>
+          <button
+            onClick={() => setOpen(true)}
+            className="text-sm px-4 py-2 bg-white text-blue-700 font-bold rounded-lg hover:bg-blue-50 transition"
+          >
+            📝 チェックコンテキスト
+          </button>
+        </div>
       </header>
 
       {/* オーバーレイ */}
@@ -39,11 +47,13 @@ export default function Header({ context, setContext, defaultContext }: Props) {
         >
           <div
             className="bg-white rounded-xl shadow-2xl w-full max-w-2xl max-h-[80vh] flex flex-col"
-            onClick={e => e.stopPropagation()}
+            onClick={(e) => e.stopPropagation()}
           >
             {/* ポップアップヘッダー */}
             <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200">
-              <h2 className="font-bold text-gray-800">📝 HTMLチェックコンテキスト</h2>
+              <h2 className="font-bold text-gray-800">
+                📝 HTMLチェックコンテキスト
+              </h2>
               <div className="flex gap-2">
                 <button
                   onClick={saveAsTxt}
@@ -52,7 +62,9 @@ export default function Header({ context, setContext, defaultContext }: Props) {
                   💾 TXTで保存
                 </button>
                 <button
-                  onClick={() => { setContext(defaultContext); }}
+                  onClick={() => {
+                    setContext(defaultContext);
+                  }}
                   className="text-xs px-3 py-1 bg-gray-100 text-gray-700 border border-gray-300 rounded-lg hover:bg-gray-200"
                 >
                   🔄 リセット
@@ -70,7 +82,7 @@ export default function Header({ context, setContext, defaultContext }: Props) {
             <div className="p-6 flex-1 overflow-auto">
               <textarea
                 value={context}
-                onChange={e => setContext(e.target.value)}
+                onChange={(e) => setContext(e.target.value)}
                 rows={16}
                 className="w-full border border-gray-300 rounded-lg px-3 py-2 text-xs text-gray-800 font-mono focus:outline-none focus:border-blue-500 resize-none"
               />

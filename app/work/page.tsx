@@ -36,89 +36,98 @@ function WorkPageContent() {
 
   const searchParams = useSearchParams();
   const jobId = searchParams.get("jobId");
+  console.log("DEBUG jobId:", jobId);
+  const loadProjectId = searchParams.get("loadProject");
   const [jobStatus, setJobStatus] = useState<"running" | "completed" | null>(
     null,
   );
   const [jobTotal, setJobTotal] = useState(0);
 
-  useEffect(() => {
-    const sUrl = sessionStorage.getItem("check_sheet_url");
-    setSheetUrl(sUrl || "");
-    setCheckers(getCheckers());
-    setHistory(getHistory());
+useEffect(() => {
+  const sUrl = sessionStorage.getItem("check_sheet_url");
+  setSheetUrl(sUrl || "");
+  setCheckers(getCheckers());
+  setHistory(getHistory());
 
-    if (!jobId) {
-      // ジョブIDが無い場合は古い履歴を読みに行く（後方互換）
-      const raw = sessionStorage.getItem("check_results");
-      if (raw) {
-        const results: CheckResult[] = JSON.parse(raw);
-        setItems(
-          results.map((r) => ({
-            ...r,
-            checker: "",
-            note: "",
-            estimatedMinutes: "",
-            actualSeconds: 0,
-            isTracking: false,
-            trackingStartedAt: null,
-          })),
+  if (loadProjectId) {
+    // 保存済み案件を開く場合
+    const raw = sessionStorage.getItem("loaded_project");
+    if (raw) {
+      const project = JSON.parse(raw);
+      setItems(project.items);
+      setSheetUrl(project.sheetUrl);
+    }
+  } else if (!jobId) {
+    const raw = sessionStorage.getItem("check_results");
+    if (raw) {
+      const results: CheckResult[] = JSON.parse(raw);
+      setItems(
+        results.map((r) => ({
+          ...r,
+          checker: "",
+          note: "",
+          estimatedMinutes: "",
+          actualSeconds: 0,
+          isTracking: false,
+          trackingStartedAt: null,
+        })),
+      );
+    } else {
+      router.push("/");
+    }
+  }
+}, [router, jobId, loadProjectId]);
+
+// ジョブのポーリング
+useEffect(() => {
+  if (!jobId) return;
+
+  let cancelled = false;
+
+  async function poll() {
+    try {
+      const res = await fetch(`/api/job-status?jobId=${jobId}`);
+      if (!res.ok) return;
+      const job = await res.json();
+      if (cancelled) return;
+
+      setJobStatus(job.status);
+      setJobTotal(job.totalUrls);
+      setSheetUrl(job.sheetUrl);
+
+      setItems((prev) => {
+        const existingUrls = new Set(prev.map((p) => p.url));
+        const newOnes = job.results.filter(
+          (r: CheckResult) => !existingUrls.has(r.url),
         );
-      } else {
-        router.push("/");
+        if (newOnes.length === 0) return prev;
+        const converted: WorkItem[] = newOnes.map((r: CheckResult) => ({
+          ...r,
+          checker: "",
+          note: "",
+          estimatedMinutes: "",
+          actualSeconds: 0,
+          isTracking: false,
+          trackingStartedAt: null,
+        }));
+        return [...prev, ...converted];
+      });
+
+      if (job.status !== "completed" && !cancelled) {
+        setTimeout(poll, 3000);
       }
+    } catch (e) {
+      console.error("polling error:", e);
+      if (!cancelled) setTimeout(poll, 5000);
     }
-  }, [router, jobId]);
+  }
 
-  // ジョブのポーリング
-  useEffect(() => {
-    if (!jobId) return;
+  poll();
 
-    let cancelled = false;
-
-    async function poll() {
-      try {
-        const res = await fetch(`/api/job-status?jobId=${jobId}`);
-        if (!res.ok) return;
-        const job = await res.json();
-        if (cancelled) return;
-
-        setJobStatus(job.status);
-        setJobTotal(job.totalUrls);
-        setSheetUrl(job.sheetUrl);
-
-        setItems((prev) => {
-          const existingUrls = new Set(prev.map((p) => p.url));
-          const newOnes = job.results.filter(
-            (r: CheckResult) => !existingUrls.has(r.url),
-          );
-          if (newOnes.length === 0) return prev;
-          const converted: WorkItem[] = newOnes.map((r: CheckResult) => ({
-            ...r,
-            checker: "",
-            note: "",
-            estimatedMinutes: "",
-            actualSeconds: 0,
-            isTracking: false,
-            trackingStartedAt: null,
-          }));
-          return [...prev, ...converted];
-        });
-
-        if (job.status !== "completed" && !cancelled) {
-          setTimeout(poll, 3000);
-        }
-      } catch (e) {
-        console.error("polling error:", e);
-        if (!cancelled) setTimeout(poll, 5000);
-      }
-    }
-
-    poll();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [jobId]);
+  return () => {
+    cancelled = true;
+  };
+}, [jobId]);
 
   function updateItem(index: number, patch: Partial<WorkItem>) {
     setItems((prev) =>
@@ -196,35 +205,38 @@ function WorkPageContent() {
     });
   }
 
-  function handleSaveProject() {
-    const name = projectName.trim();
-    if (!name) {
-      alert("案件名を入力してください");
-      return;
-    }
+// 変更後
+async function handleSaveProject() {
+  const name = projectName.trim();
+  if (!name) {
+    alert("案件名を入力してください");
+    return;
+  }
 
-    const currentHistory = getHistory();
-    const willExceed = currentHistory.length >= 5;
+  const project = {
+    id: Date.now().toString(),
+    projectName: name,
+    sheetUrl,
+    items,
+    savedAt: new Date().toLocaleString("ja-JP"),
+  };
 
-    const project: ProjectHistory = {
-      id: Date.now().toString(),
-      projectName: name,
-      sheetUrl,
-      items,
-      savedAt: new Date().toLocaleString("ja-JP"),
-    };
+  try {
+    const res = await fetch("/api/projects", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(project),
+    });
 
-    saveToHistory(project);
-    setHistory(getHistory());
+    if (!res.ok) throw new Error("保存に失敗しました");
+
     setShowSaveDialog(false);
     setProjectName("");
-
-    if (willExceed) {
-      alert("✅ 保存しました（最も古い履歴が削除されました）");
-    } else {
-      alert("✅ 保存しました");
-    }
+    alert("✅ サーバーに保存しました（全員が閲覧できます）");
+  } catch (e: any) {
+    alert("エラー: " + e.message);
   }
+}
 
   function handleDeleteHistory(id: string, name: string) {
     if (!confirm(`「${name}」を削除しますか？この操作は取り消せません。`))
