@@ -42,3 +42,17 @@ export async function cancelJob(jobId: string): Promise<void> {
   job.status = 'cancelled';
   await redis.set(`${JOB_PREFIX}${jobId}`, JSON.stringify(job), { ex: JOB_TTL });
 }
+
+const BATCH_PREFIX = 'job_batches:';
+
+export async function setTotalBatches(jobId: string, totalBatches: number): Promise<void> {
+  await redis.set(`${BATCH_PREFIX}${jobId}`, JSON.stringify({ total: totalBatches, completed: 0 }), { ex: JOB_TTL });
+}
+
+export async function incrementCompletedBatch(jobId: string): Promise<{ total: number; completed: number }> {
+  const raw = await redis.get<string>(`${BATCH_PREFIX}${jobId}`);
+  const data = raw ? (typeof raw === 'string' ? JSON.parse(raw) : raw) : { total: 0, completed: 0 };
+  data.completed += 1;
+  await redis.set(`${BATCH_PREFIX}${jobId}`, JSON.stringify(data), { ex: JOB_TTL });
+  return data;
+}

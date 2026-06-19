@@ -1,4 +1,4 @@
-import { appendResultToJob, completeJob, getJob } from "./job";
+import { appendResultToJob, getJob } from './job';
 
 const GEMINI_API_URL =
   "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent";
@@ -143,9 +143,5 @@ export async function runCheckJob(
     next();
   });
 
-  const finalJob = await getJob(jobId);
-  if (finalJob?.status !== "cancelled") {
-    await completeJob(jobId);
-  }
-  console.log(`[JOB ${jobId}] ALL DONE`);
+console.log(`[JOB ${jobId}] BATCH DONE`);
 }

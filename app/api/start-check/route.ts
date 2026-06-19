@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { after } from 'next/server';
-import { createJob } from '../../lib/job';
+import { createJob, setTotalBatches, incrementCompletedBatch, completeJob } from '../../lib/job';
 import { runCheckJob } from '../../lib/checkRunner';
+
+const BATCH_SIZE = 4; // 1リクエストあたりの処理件数（60秒以内に収まる目安）
 
 export async function POST(req: NextRequest) {
   const { urls, sheetUrl, context } = await req.json();
@@ -18,15 +20,32 @@ export async function POST(req: NextRequest) {
 
   const jobId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
-  await createJob(jobId, sheetUrl, filteredUrls.length);
+  // バッチに分割
+  const batches: string[][] = [];
+  for (let i = 0; i < filteredUrls.length; i += BATCH_SIZE) {
+    batches.push(filteredUrls.slice(i, i + BATCH_SIZE));
+  }
 
-  // after()を使うことで、レスポンスを返した後もVercelが処理の継続を保証する
-  after(async () => {
-    try {
-      await runCheckJob(jobId, filteredUrls, sheetUrl, context, apiKey);
-    } catch (e) {
-      console.error(`[JOB ${jobId}] 致命的エラー:`, e);
-    }
+  await createJob(jobId, sheetUrl, filteredUrls.length);
+  await setTotalBatches(jobId, batches.length);
+
+  // 各バッチを並行して起動（それぞれ独立したafter()で実行）
+  batches.forEach((batchUrls) => {
+    after(async () => {
+      try {
+        await runCheckJob(jobId, batchUrls, sheetUrl, context, apiKey);
+        const progress = await incrementCompletedBatch(jobId);
+        if (progress.completed >= progress.total) {
+          await completeJob(jobId);
+        }
+      } catch (e) {
+        console.error(`[JOB ${jobId}] バッチ処理エラー:`, e);
+        const progress = await incrementCompletedBatch(jobId);
+        if (progress.completed >= progress.total) {
+          await completeJob(jobId);
+        }
+      }
+    });
   });
 
   return NextResponse.json({ jobId });
