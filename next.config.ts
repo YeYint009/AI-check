@@ -6,6 +6,7 @@ const nextConfig: NextConfig = {
       bodySizeLimit: '10mb',
     },
   },  
+    serverExternalPackages: ['playwright-core', '@sparticuz/chromium'],
 };
 
 export default nextConfig;
