@@ -217,7 +217,7 @@ export default function Home() {
       router.push(`/screenshot-work?jobId=${jobId}`);
 
       // バッチを順番に実行（バックグラウンドで進める、ページ遷移後も継続）
-      const BATCH_SIZE = 2; // スクショ+Pro解析は重いので小さめ
+      const BATCH_SIZE = 1; // スクショ+Pro解析は重いので小さめ
       for (let i = 0; i < urls.length; i += BATCH_SIZE) {
         const batch = urls.slice(i, i + BATCH_SIZE);
         await fetch("/api/run-screenshot-batch", {
