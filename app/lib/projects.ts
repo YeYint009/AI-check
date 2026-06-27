@@ -1,15 +1,12 @@
 import { redis } from './redis';
-import { SavedProject } from '../types';
+import { SavedProject, WorkItem } from '../types';
 
 const PROJECT_PREFIX = 'project:';
 const PROJECT_LIST_KEY = 'project_list';
 
-
 export async function saveProject(project: SavedProject): Promise<void> {
   const exists = await redis.get(`${PROJECT_PREFIX}${project.id}`);
   await redis.set(`${PROJECT_PREFIX}${project.id}`, JSON.stringify(project));
-
-  // 既に存在する場合はリストに追加しない（重複防止）
   if (!exists) {
     await redis.lpush(PROJECT_LIST_KEY, project.id);
   }
@@ -41,3 +38,15 @@ export async function deleteProject(id: string): Promise<void> {
   await redis.lrem(PROJECT_LIST_KEY, 0, id);
 }
 
+// 行単位の更新（複数人同時編集対応）
+export async function updateProjectItem(
+  projectId: string,
+  itemIndex: number,
+  patch: Partial<WorkItem>
+): Promise<void> {
+  const project = await getProject(projectId);
+  if (!project) return;
+
+  project.items[itemIndex] = { ...project.items[itemIndex], ...patch };
+  await redis.set(`${PROJECT_PREFIX}${projectId}`, JSON.stringify(project));
+}

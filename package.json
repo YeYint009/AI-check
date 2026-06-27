@@ -9,9 +9,11 @@
     "lint": "eslint"
   },
   "dependencies": {
+    "@sparticuz/chromium": "^149.0.0",
     "@upstash/redis": "^1.38.0",
     "file-saver": "^2.0.5",
     "next": "16.2.9",
+    "playwright-core": "^1.61.1",
     "postcss": "^8.5.15",
     "react": "19.2.4",
     "react-dom": "19.2.4",
@@ -25,6 +27,7 @@
     "@types/react-dom": "^19",
     "eslint": "^9",
     "eslint-config-next": "16.2.9",
+    "playwright": "^1.61.1",
     "tailwindcss": "^4.3.1",
     "typescript": "^5"
   }

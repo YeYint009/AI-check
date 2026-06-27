@@ -68,7 +68,7 @@ export function parseFixItems(markdown: string): FixItem[] {
         location: cells[1],
         issue: cells[2],
         suggestion: cells[3],
-        completed: false,
+        status: 'pending',
       });
     }
   }

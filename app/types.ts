@@ -4,6 +4,7 @@ export type CheckResult = {
   status: 'success' | 'error';
   result: string;
   elapsed: string;
+  screenshotBase64?: string; // スクショ画像（Base64、JPEG）
 };
 
 export type WorkItem = CheckResult & {
@@ -16,12 +17,14 @@ export type WorkItem = CheckResult & {
   fixItems?: FixItem[]; 
 };
 
+export type FixStatus = 'pending' | 'completed' | 'not_needed';
+
 export type FixItem = {
   id: string;
   location: string;
   issue: string;
   suggestion: string;
-  completed: boolean;
+  status: FixStatus;
 };
 
 export type ProjectHistory = {

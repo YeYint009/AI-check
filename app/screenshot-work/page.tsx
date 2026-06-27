@@ -1,22 +1,18 @@
 "use client";
 
 import { useState, useEffect, Suspense } from "react";
-import { useRouter } from "next/navigation";
-import {
-  getCheckers,
-  addChecker,
-  getHistory,
-  saveToHistory,
-  deleteFromHistory,
-  parseFixItems,
-} from "../lib/storage";
-import { CheckResult, WorkItem, ProjectHistory, FixItem } from "../types";
+import { useRouter, useSearchParams } from "next/navigation";
+import { getCheckers, addChecker, parseFixItems } from "../lib/storage";
+import { CheckResult, WorkItem, ProjectHistory } from "../types";
 import * as XLSX from "xlsx";
 import React from "react";
-import { useSearchParams } from "next/navigation";
 
-function WorkPageContent() {
+function ScreenshotWorkContent() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const jobId = searchParams.get("jobId");
+  const loadProjectId = searchParams.get("loadProject");
+
   const [items, setItems] = useState<WorkItem[]>([]);
   const [sheetUrl, setSheetUrl] = useState("");
   const [checkers, setCheckers] = useState<string[]>([]);
@@ -25,60 +21,35 @@ function WorkPageContent() {
   const [, forceUpdate] = useState(0);
   const [showSaveDialog, setShowSaveDialog] = useState(false);
   const [projectName, setProjectName] = useState("");
-  const [showHistoryPanel, setShowHistoryPanel] = useState(false);
-  const [history, setHistory] = useState<ProjectHistory[]>([]);
   const [openRows, setOpenRows] = useState<Set<number>>(new Set());
   const [currentProjectId, setCurrentProjectId] = useState<string | null>(null);
   const [recheckingUrls, setRecheckingUrls] = useState<Set<string>>(new Set());
+  const [jobStatus, setJobStatus] = useState<
+    "running" | "completed" | "cancelled" | null
+  >(null);
+  const [jobTotal, setJobTotal] = useState(0);
 
   useEffect(() => {
     const interval = setInterval(() => forceUpdate((n) => n + 1), 1000);
     return () => clearInterval(interval);
   }, []);
 
-  const searchParams = useSearchParams();
-  const jobId = searchParams.get("jobId");
-  console.log("DEBUG jobId:", jobId);
-  const loadProjectId = searchParams.get("loadProject");
-  const [jobStatus, setJobStatus] = useState<"running" | "completed" | null>(
-    null,
-  );
-  const [jobTotal, setJobTotal] = useState(0);
-
   useEffect(() => {
     const sUrl = sessionStorage.getItem("check_sheet_url");
     setSheetUrl(sUrl || "");
     setCheckers(getCheckers());
-    setHistory(getHistory());
 
     if (loadProjectId) {
-      // 保存済み案件を開く場合
       const raw = sessionStorage.getItem("loaded_project");
       if (raw) {
         const project = JSON.parse(raw);
         setItems(project.items);
         setSheetUrl(project.sheetUrl);
-        setCurrentProjectId(project.id); // ← 追加
-        setProjectName(project.projectName); // ← 追加（保存時に名前を再利用）
+        setCurrentProjectId(project.id);
+        setProjectName(project.projectName);
       }
     } else if (!jobId) {
-      const raw = sessionStorage.getItem("check_results");
-      if (raw) {
-        const results: CheckResult[] = JSON.parse(raw);
-        setItems(
-          results.map((r) => ({
-            ...r,
-            checker: "",
-            note: "",
-            estimatedMinutes: "",
-            actualSeconds: 0,
-            isTracking: false,
-            trackingStartedAt: null,
-          })),
-        );
-      } else {
-        router.push("/");
-      }
+      router.push("/");
     }
   }, [router, jobId, loadProjectId]);
 
@@ -127,29 +98,28 @@ function WorkPageContent() {
     }
 
     poll();
-
     return () => {
       cancelled = true;
     };
   }, [jobId]);
 
-function updateItem(index: number, patch: Partial<WorkItem>) {
-  setItems((prev) =>
-    prev.map((item, i) => (i === index ? { ...item, ...patch } : item)),
-  );
+  function updateItem(index: number, patch: Partial<WorkItem>) {
+    setItems((prev) =>
+      prev.map((item, i) => (i === index ? { ...item, ...patch } : item)),
+    );
 
-  if (currentProjectId) {
-    fetch("/api/projects/update-item", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        projectId: currentProjectId,
-        itemIndex: index,
-        patch,
-      }),
-    }).catch((e) => console.error("auto-save error:", e));
+    if (currentProjectId) {
+      fetch("/api/projects/update-item", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          projectId: currentProjectId,
+          itemIndex: index,
+          patch,
+        }),
+      }).catch((e) => console.error("auto-save error:", e));
+    }
   }
-}
 
   function toggleRow(i: number) {
     setOpenRows((prev) => {
@@ -180,14 +150,13 @@ function updateItem(index: number, patch: Partial<WorkItem>) {
       )
     )
       return;
-
     try {
       await fetch("/api/cancel-job", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ jobId }),
       });
-      setJobStatus("completed"); // UI上は完了扱いにする
+      setJobStatus("completed");
     } catch (e) {
       console.error("cancel error:", e);
     }
@@ -198,19 +167,30 @@ function updateItem(index: number, patch: Partial<WorkItem>) {
     setRecheckingUrls((prev) => new Set(prev).add(item.url));
 
     try {
-      const res = await fetch("/api/start-check", {
+      const createRes = await fetch("/api/create-screenshot-job", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ urls: [item.url], sheetUrl, context: "" }),
+        body: JSON.stringify({ sheetUrl, totalUrls: 1 }),
       });
-
-      const data = await res.json();
-      if (!res.ok || !data.jobId) {
-        throw new Error(data.error || "再チェックに失敗しました");
+      const createData = await createRes.json();
+      if (!createRes.ok || !createData.jobId) {
+        throw new Error(createData.error || "再チェックに失敗しました");
       }
 
-      // 単発ジョブの結果をポーリングして取得
-      await pollSingleResult(data.jobId, index);
+      const recheckJobId = createData.jobId;
+
+      await fetch("/api/run-screenshot-batch", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          jobId: recheckJobId,
+          urls: [item.url],
+          sheetUrl,
+          context: "",
+        }),
+      });
+
+      await pollSingleResult(recheckJobId, index);
     } catch (e: any) {
       console.error("recheck error:", e);
       alert("再チェックに失敗しました: " + e.message);
@@ -244,7 +224,7 @@ function updateItem(index: number, patch: Partial<WorkItem>) {
               status: newResult.status,
               result: newResult.result,
               elapsed: newResult.elapsed,
-              fixItems: undefined, // 再パースさせるためリセット
+              fixItems: undefined,
             });
           }
 
@@ -297,6 +277,7 @@ function updateItem(index: number, patch: Partial<WorkItem>) {
       actualSeconds: item.actualSeconds + elapsedSec,
     });
   }
+
   async function handleSaveProject() {
     const name = projectName.trim();
     if (!name) {
@@ -304,9 +285,8 @@ function updateItem(index: number, patch: Partial<WorkItem>) {
       return;
     }
 
-    // 既存案件を編集中なら同じIDを使う、新規ならタイムスタンプで新規発行
     const project = {
-      id: currentProjectId || Date.now().toString(),
+      id: currentProjectId || `ss-${Date.now()}`,
       projectName: name,
       sheetUrl,
       items,
@@ -322,7 +302,7 @@ function updateItem(index: number, patch: Partial<WorkItem>) {
 
       if (!res.ok) throw new Error("保存に失敗しました");
 
-      setCurrentProjectId(project.id); // 以後はこの案件として更新され続ける
+      setCurrentProjectId(project.id);
       setShowSaveDialog(false);
 
       if (currentProjectId) {
@@ -333,19 +313,6 @@ function updateItem(index: number, patch: Partial<WorkItem>) {
     } catch (e: any) {
       alert("エラー: " + e.message);
     }
-  }
-
-  function handleDeleteHistory(id: string, name: string) {
-    if (!confirm(`「${name}」を削除しますか？この操作は取り消せません。`))
-      return;
-    const updated = deleteFromHistory(id);
-    setHistory(updated);
-  }
-
-  function loadFromHistory(project: ProjectHistory) {
-    setItems(project.items);
-    setSheetUrl(project.sheetUrl);
-    setShowHistoryPanel(false);
   }
 
   function exportCurrentToXlsx() {
@@ -366,46 +333,10 @@ function updateItem(index: number, patch: Partial<WorkItem>) {
     });
     const ws = XLSX.utils.json_to_sheet(rows);
     const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "作業結果");
+    XLSX.utils.book_append_sheet(wb, ws, "画像チェック結果");
     XLSX.writeFile(
       wb,
-      `作業結果_${new Date().toISOString().slice(0, 10)}.xlsx`,
-    );
-  }
-
-  function exportAllHistoryToXlsx() {
-    if (history.length === 0) {
-      alert("履歴がありません");
-      return;
-    }
-
-    const wb = XLSX.utils.book_new();
-
-    history.forEach((h) => {
-      const rows = h.items.map((item) => {
-        const isOk =
-          item.status === "success" && item.result.trim() === "問題なし";
-        return {
-          ページ名: item.h1,
-          URL: item.url,
-          ステータス:
-            item.status === "error" ? "エラー" : isOk ? "問題なし" : "要修正",
-          チェック結果: item.result,
-          チェック者: item.checker,
-          備考: item.note,
-          "目安工数(分)": item.estimatedMinutes,
-          "実工数(秒)": item.actualSeconds,
-        };
-      });
-      const ws = XLSX.utils.json_to_sheet(rows);
-      const safeName =
-        h.projectName.replace(/[\\/?*[\]:]/g, "").slice(0, 31) || "Sheet";
-      XLSX.utils.book_append_sheet(wb, ws, safeName);
-    });
-
-    XLSX.writeFile(
-      wb,
-      `全案件履歴_${new Date().toISOString().slice(0, 10)}.xlsx`,
+      `画像チェック結果_${new Date().toISOString().slice(0, 10)}.xlsx`,
     );
   }
 
@@ -424,13 +355,13 @@ function updateItem(index: number, patch: Partial<WorkItem>) {
   return (
     <main className="min-h-screen bg-gray-50">
       <header className="bg-purple-700 text-white px-6 py-4 shadow flex items-center justify-between">
-        <h1 className="text-xl font-bold">🛠 作業管理ページ</h1>
+        <h1 className="text-xl font-bold">📸 画像チェック作業管理ページ</h1>
         <div className="flex gap-2">
           <button
-            onClick={() => setShowHistoryPanel(true)}
+            onClick={() => (window.location.href = "/projects")}
             className="text-sm px-4 py-2 bg-purple-500 text-white font-bold rounded-lg hover:bg-purple-400"
           >
-            📁 履歴 ({history.length}/5)
+            📂 案件一覧
           </button>
           <button
             onClick={exportCurrentToXlsx}
@@ -463,13 +394,6 @@ function updateItem(index: number, patch: Partial<WorkItem>) {
             onClick={(e) => e.stopPropagation()}
           >
             <h2 className="font-bold text-gray-800 mb-4">💾 案件として保存</h2>
-
-            {history.length >= 5 && (
-              <p className="text-red-600 text-sm font-bold mb-3">
-                ⚠️ 注意事項：6案件目から履歴が消えます
-              </p>
-            )}
-
             <input
               type="text"
               value={projectName}
@@ -477,7 +401,6 @@ function updateItem(index: number, patch: Partial<WorkItem>) {
               placeholder="案件名を入力（例：株式会社〇〇）"
               className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm text-gray-800 mb-4"
             />
-
             <div className="flex justify-end gap-2">
               <button
                 onClick={() => setShowSaveDialog(false)}
@@ -496,92 +419,12 @@ function updateItem(index: number, patch: Partial<WorkItem>) {
         </div>
       )}
 
-      {showHistoryPanel && (
-        <div
-          className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4"
-          onClick={() => setShowHistoryPanel(false)}
-        >
-          <div
-            className="bg-white rounded-xl shadow-2xl w-full max-w-2xl max-h-[80vh] flex flex-col"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200">
-              <h2 className="font-bold text-gray-800">
-                📁 案件履歴（最大5件）
-              </h2>
-              <button
-                onClick={() => setShowHistoryPanel(false)}
-                className="text-xs px-3 py-1 bg-red-50 text-red-600 border border-red-300 rounded-lg hover:bg-red-100"
-              >
-                ✕ 閉じる
-              </button>
-            </div>
-            <div className="p-4 overflow-y-auto flex-1">
-              {history.length > 0 && (
-                <button
-                  onClick={exportAllHistoryToXlsx}
-                  className="w-full mb-3 text-sm px-4 py-2 bg-green-600 text-white font-bold rounded-lg hover:bg-green-700"
-                >
-                  📊 全履歴をまとめてExcel出力（案件ごとに別タブ）
-                </button>
-              )}
-
-              {history.length >= 5 && (
-                <p className="text-red-600 text-sm font-bold mb-3">
-                  ⚠️ 注意事項：6案件目から履歴が消えます
-                </p>
-              )}
-
-              {history.length === 0 ? (
-                <p className="text-gray-500 text-sm text-center py-8">
-                  保存された履歴はありません
-                </p>
-              ) : (
-                <div className="space-y-2">
-                  {history.map((h) => (
-                    <div
-                      key={h.id}
-                      className="border border-gray-200 rounded-lg p-3 flex items-center justify-between hover:bg-gray-50"
-                    >
-                      <div>
-                        <div className="font-bold text-gray-800 text-sm">
-                          {h.projectName}
-                        </div>
-                        <div className="text-xs text-gray-500">
-                          {h.savedAt} ・ {h.items.length}ページ
-                        </div>
-                      </div>
-                      <div className="flex gap-2">
-                        <button
-                          onClick={() => loadFromHistory(h)}
-                          className="text-xs px-3 py-1 bg-blue-100 text-blue-700 border border-blue-300 rounded-lg hover:bg-blue-200"
-                        >
-                          開く
-                        </button>
-                        <button
-                          onClick={() =>
-                            handleDeleteHistory(h.id, h.projectName)
-                          }
-                          className="text-xs px-3 py-1 bg-red-100 text-red-700 border border-red-300 rounded-lg hover:bg-red-200"
-                        >
-                          削除
-                        </button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
-
       <div className="max-w-6xl mx-auto p-6">
         {jobId && jobStatus === "running" && (
-          <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 mb-4">
+          <div className="bg-purple-50 border border-purple-200 rounded-xl p-4 mb-4">
             <div className="flex items-center gap-3 mb-2">
               <svg
-                className="animate-spin h-5 w-5 text-blue-500"
+                className="animate-spin h-5 w-5 text-purple-500"
                 xmlns="http://www.w3.org/2000/svg"
                 fill="none"
                 viewBox="0 0 24 24"
@@ -600,10 +443,10 @@ function updateItem(index: number, patch: Partial<WorkItem>) {
                   d="M4 12a8 8 0 018-8v8H4z"
                 />
               </svg>
-              <span className="text-blue-700 font-bold text-sm">
-                チェック実行中...
+              <span className="text-purple-700 font-bold text-sm">
+                スクショ取得・チェック実行中...
               </span>
-              <span className="text-blue-600 text-sm ml-auto">
+              <span className="text-purple-600 text-sm ml-auto">
                 {items.length} / {jobTotal} 件完了
               </span>
               <button
@@ -613,19 +456,20 @@ function updateItem(index: number, patch: Partial<WorkItem>) {
                 ⏹ 停止
               </button>
             </div>
-            <div className="w-full bg-blue-100 rounded-full h-2 overflow-hidden">
+            <div className="w-full bg-purple-100 rounded-full h-2 overflow-hidden">
               <div
-                className="bg-blue-500 h-2 rounded-full transition-all duration-500"
+                className="bg-purple-500 h-2 rounded-full transition-all duration-500"
                 style={{
                   width: `${jobTotal > 0 ? (items.length / jobTotal) * 100 : 0}%`,
                 }}
               />
             </div>
-            <p className="text-xs text-blue-500 mt-2">
+            <p className="text-xs text-purple-500 mt-2">
               このページを閉じても、同じURLを開けば続きから確認できます
             </p>
           </div>
         )}
+
         <div className="bg-white rounded-xl shadow p-4 mb-4 flex flex-wrap gap-6 items-center">
           <div className="text-sm text-gray-600">
             合計目安工数: <span className="font-bold">{totalEstimated}分</span>
@@ -634,7 +478,6 @@ function updateItem(index: number, patch: Partial<WorkItem>) {
             合計実工数:{" "}
             <span className="font-bold">{formatSeconds(totalActual)}</span>
           </div>
-
           <div className="ml-auto flex items-center gap-2">
             <button
               onClick={() => setShowAddChecker(!showAddChecker)}
@@ -694,7 +537,6 @@ function updateItem(index: number, patch: Partial<WorkItem>) {
                 return (
                   <React.Fragment key={i}>
                     <tr
-                      key={i}
                       className="border-b hover:bg-gray-50 cursor-pointer"
                       onClick={() => toggleRow(i)}
                     >
@@ -714,7 +556,7 @@ function updateItem(index: number, patch: Partial<WorkItem>) {
                       <td className="px-3 py-3">
                         <span
                           className={`text-xs px-2 py-1 rounded-full font-bold
-                  ${isOk ? "bg-green-200 text-green-900" : isErr ? "bg-orange-200 text-orange-900" : "bg-red-200 text-red-900"}`}
+                          ${isOk ? "bg-green-200 text-green-900" : isErr ? "bg-orange-200 text-orange-900" : "bg-red-200 text-red-900"}`}
                         >
                           {isOk ? "問題なし" : isErr ? "エラー" : "要修正"}
                         </span>
@@ -813,7 +655,6 @@ function updateItem(index: number, patch: Partial<WorkItem>) {
                       </td>
                     </tr>
 
-                    {/* アコーディオン展開部分 */}
                     {isOpen && (
                       <tr className="bg-gray-50">
                         <td colSpan={7} className="px-6 py-4">
@@ -869,13 +710,13 @@ function updateItem(index: number, patch: Partial<WorkItem>) {
                                             )
                                           }
                                           className={`text-xs rounded px-2 py-1 border w-full
-              ${
-                fix.status === "completed"
-                  ? "bg-green-100 border-green-300 text-green-800"
-                  : fix.status === "not_needed"
-                    ? "bg-gray-200 border-gray-300 text-gray-700"
-                    : "bg-yellow-100 border-yellow-300 text-yellow-800"
-              }`}
+                                            ${
+                                              fix.status === "completed"
+                                                ? "bg-green-100 border-green-300 text-green-800"
+                                                : fix.status === "not_needed"
+                                                  ? "bg-gray-200 border-gray-300 text-gray-700"
+                                                  : "bg-yellow-100 border-yellow-300 text-yellow-800"
+                                            }`}
                                         >
                                           <option value="pending">
                                             未対応
@@ -888,7 +729,6 @@ function updateItem(index: number, patch: Partial<WorkItem>) {
                                           </option>
                                         </select>
                                       </td>
-                        
                                       <td
                                         className={`px-3 py-2 border-b ${isStruck ? "line-through text-gray-400" : isMuted ? "text-gray-400" : "text-gray-800"}`}
                                       >
@@ -928,7 +768,7 @@ function updateItem(index: number, patch: Partial<WorkItem>) {
   );
 }
 
-export default function WorkPage() {
+export default function ScreenshotWorkPage() {
   return (
     <Suspense
       fallback={
@@ -937,7 +777,7 @@ export default function WorkPage() {
         </div>
       }
     >
-      <WorkPageContent />
+      <ScreenshotWorkContent />
     </Suspense>
   );
 }
