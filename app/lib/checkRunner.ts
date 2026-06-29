@@ -1,6 +1,7 @@
 import { appendResultToJob, getJob } from './job';
 
-const GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent';
+const GEMINI_API_URL =
+  "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent";
 
 async function fetchHtml(url: string): Promise<string> {
   const res = await fetch(url, {
